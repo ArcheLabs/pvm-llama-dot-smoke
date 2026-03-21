@@ -1,0 +1,8 @@
+[package]
+name = "pvm-llama-dot-smoke"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+polkavm = "0.32.0"
