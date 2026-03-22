@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2025 ArcheLabs
 use crate::consts::{
-    PVM_DI_MAGIC, PVM_DOT_PROVIDER_HOST_READ_AT, PVM_DOT_Q8_0_BLOCK_LEN, PVM_DOT_Q8_0_VALUES,
-    PVM_DOT_QUANT_Q8_0, PVM_DO_MAGIC, SMOKE_TEST_VERSION,
+    PVM_DI_MAGIC, PVM_DOT_OK, PVM_DOT_PROVIDER_HOST_READ_AT, PVM_DOT_Q8_0_BLOCK_LEN,
+    PVM_DOT_Q8_0_VALUES, PVM_DOT_QUANT_Q8_0, PVM_DO_MAGIC, SMOKE_TEST_VERSION,
 };
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Error, Result};
 use jam_codec::{Decode, Encode};
+use polkavm::Instance;
 use std::{
     fs::File,
     io::{Read, Seek, SeekFrom},
@@ -14,8 +15,8 @@ use std::{
 #[derive(Debug, Default, Clone, Decode, Encode)]
 pub struct Q8Input(pub [f32; PVM_DOT_Q8_0_VALUES]);
 
-impl From<&[f32]> for Q8Input {
-    fn from(slice: &[f32]) -> Self {
+impl From<[f32; PVM_DOT_Q8_0_VALUES]> for Q8Input {
+    fn from(slice: [f32; PVM_DOT_Q8_0_VALUES]) -> Self {
         let mut arr = [0.0f32; PVM_DOT_Q8_0_VALUES];
         arr.copy_from_slice(&slice[..PVM_DOT_Q8_0_VALUES]);
         Self(arr)
@@ -30,6 +31,12 @@ impl From<&[u8]> for Q8Block {
         let mut block = [0u8; PVM_DOT_Q8_0_BLOCK_LEN as usize];
         block.copy_from_slice(&bytes[..PVM_DOT_Q8_0_BLOCK_LEN as usize]);
         Self(block)
+    }
+}
+
+impl Default for Q8Block {
+    fn default() -> Self {
+        Self([0u8; PVM_DOT_Q8_0_BLOCK_LEN as usize])
     }
 }
 
@@ -64,7 +71,7 @@ pub struct DotInput {
     pub reserved1: u32,
 }
 
-const DI01_LEN: u32 = std::mem::size_of::<DotInput>() as u32;
+pub const DI01_LEN: u32 = std::mem::size_of::<DotInput>() as u32;
 
 /// DO01 header.
 /// Used as the agreed full output buffer format between the guest and the host.
@@ -90,7 +97,7 @@ pub struct DotOutput {
     pub reserved: u32,
 }
 
-const DO01_LEN: u32 = std::mem::size_of::<DotOutput>() as u32;
+pub const DO01_LEN: u32 = std::mem::size_of::<DotOutput>() as u32;
 
 impl Default for DotInput {
     fn default() -> Self {
@@ -139,6 +146,14 @@ impl Default for DotOutput {
     }
 }
 
+#[derive(Debug, Clone, Decode, Encode)]
+pub struct InstancePosion {
+    pub input_ptr: u32,
+    pub input_cap: u32,
+    pub output_ptr: u32,
+    pub output_cap: u32,
+}
+
 /// Fixed sample: `output.weight` / `Q8_0` / `block 0`
 ///
 /// The smoke test is bound to the fixed block offset in the real model file.
@@ -146,7 +161,7 @@ impl Default for DotOutput {
 ///
 /// Note: the tensor/type information of a GGUF model file can be inspected with:
 /// https://github.com/ggml-org/llama.cpp/blob/master/gguf-py/gguf/scripts/gguf_dump.py
-const FIXED_BLOCK_FILE_OFF: u64 = 5_947_744;
+pub const FIXED_BLOCK_FILE_OFF: u64 = 5_947_744;
 
 #[derive(Debug)]
 pub struct HostState {
@@ -157,12 +172,20 @@ pub struct HostState {
 }
 
 impl HostState {
-    fn read_exact_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
+    pub fn new(model_file: File) -> Result<Self> {
+        let model_len = model_file.metadata()?.len();
+        Ok(Self {
+            model_file,
+            model_len,
+        })
+    }
+
+    pub fn read_exact_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
         let len = buf.len() as u64;
 
-        let end = offset.checked_add(len).ok_or_else(|| {
-            anyhow::anyhow!("offset overflow: offset {:#x}, length {:#x}", offset, len)
-        })?;
+        let end = offset
+            .checked_add(len)
+            .ok_or_else(|| anyhow!("offset overflow: offset {:#x}, length {:#x}", offset, len))?;
 
         if end > self.model_len {
             bail!(
@@ -177,7 +200,7 @@ impl HostState {
         Ok(())
     }
 
-    fn read_page_zero_padded(&mut self, off: u64, buf: &mut [u8]) -> Result<()> {
+    pub fn read_page_zero_padded(&mut self, off: u64, buf: &mut [u8]) -> Result<()> {
         buf.fill(0);
 
         let avail_len = self.model_len.saturating_sub(off);
@@ -189,5 +212,78 @@ impl HostState {
         self.read_exact_at(off, &mut buf[..read_len])?;
 
         Ok(())
+    }
+
+    pub fn init(
+        &mut self,
+        instance: &mut Instance<HostState, Error>,
+        input_len: u32,
+    ) -> Result<InstancePosion> {
+        let input_ptr: u32 = instance
+            .call_typed_and_get_result(self, "pvm_input_ptr", ())
+            .map_err(|e| anyhow!("call pvm_input_ptr failed: {:?}", e))?;
+
+        let input_cap: u32 = instance
+            .call_typed_and_get_result(self, "pvm_input_cap", ())
+            .map_err(|e| anyhow!("call pvm_input_cap failed: {:?}", e))?;
+
+        let output_ptr: u32 = instance
+            .call_typed_and_get_result(self, "pvm_output_ptr", ())
+            .map_err(|e| anyhow!("call pvm_output_ptr failed: {:?}", e))?;
+
+        let output_cap: u32 = instance
+            .call_typed_and_get_result(self, "pvm_output_cap", ())
+            .map_err(|e| anyhow!("call pvm_output_cap failed: {:?}", e))?;
+
+        if input_len > input_cap {
+            bail!(
+                "input length {} exceeds input capacity {}",
+                input_len,
+                input_cap
+            );
+        }
+
+        if DO01_LEN > output_cap {
+            bail!(
+                "DO01 header length {} exceeds output capacity {}",
+                DO01_LEN,
+                output_cap
+            );
+        }
+
+        Ok(InstancePosion {
+            input_ptr,
+            input_cap,
+            output_ptr,
+            output_cap,
+        })
+    }
+
+    pub fn run(
+        &mut self,
+        instance: &mut Instance<HostState, Error>,
+        pos: &InstancePosion,
+        input_len: u32,
+    ) -> Result<Vec<u8>> {
+        let status: u64 = instance
+            .call_typed_and_get_result(
+                self,
+                "main",
+                (
+                    pos.input_ptr,
+                    input_len,
+                    pos.output_ptr,
+                    DO01_LEN as u32,
+                ),
+            )
+            .map_err(|e| anyhow!("guest call failed: {:?}", e))?;
+
+        if status != PVM_DOT_OK {
+            return Err(anyhow!("guest returned error status: {:#x}", status));
+        }
+
+        let out = instance.read_memory(pos.output_ptr, DO01_LEN as u32)?;
+
+        Ok(out)
     }
 }

@@ -11,6 +11,11 @@ pub fn read_u32_le(buf: &[u8], off: usize) -> u32 {
     u32::from_le_bytes(bytes)
 }
 
+/// A simple method to compare two floating-point numbers for approximate equality
+pub fn approx_eq(a: f32, b: f32) -> bool {
+    (a - b).abs() <= 1e-6
+}
+
 /// Build the fixed input vector `x`.
 ///
 /// For smoke-test purposes, this is a simple deterministic test input rather

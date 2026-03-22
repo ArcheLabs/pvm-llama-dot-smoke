@@ -34,3 +34,6 @@ pub const SMOKE_TEST_VERSION: u32 = 1;
 /// - The production design will keep this mechanism. In the future, commitments
 ///   over the model file can be used to verify that the data has not been tampered with.
 pub const PVM_DOT_PROVIDER_HOST_READ_AT: u32 = 4;
+
+/// Success code returned by the host after successfully handling the provider request.
+pub const PVM_DOT_OK: u64 = 0;
