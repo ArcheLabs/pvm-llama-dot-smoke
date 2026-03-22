@@ -6,3 +6,4 @@ edition = "2021"
 [dependencies]
 anyhow = "1"
 polkavm = "0.32.0"
+jam-codec = { version = "0.1.1", features = ["derive"] }
