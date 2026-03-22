@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2025 ArcheLabs
-use crate::consts::PVM_DOT_Q8_0_VALUES;
+use crate::consts::{
+    PVM_DI_MAGIC, PVM_DOT_PROVIDER_HOST_READ_AT, PVM_DOT_Q8_0_BLOCK_LEN, PVM_DOT_Q8_0_VALUES,
+    PVM_DOT_QUANT_Q8_0, PVM_DO_MAGIC, SMOKE_TEST_VERSION,
+};
 use jam_codec::{Decode, Encode};
 
 #[derive(Debug, Default, Clone, Decode, Encode)]
@@ -37,6 +40,8 @@ pub struct DotInput {
     pub reserved1: u32,
 }
 
+const DI01_LEN: u32 = std::mem::size_of::<DotInput>() as u32;
+
 /// DO01 header.
 /// Used as the agreed full output buffer format between the guest and the host.
 #[derive(Debug, Clone, Decode, Encode)]
@@ -59,4 +64,53 @@ pub struct DotOutput {
     pub block_len: u32,
     /// Reserved field, currently unused. Defaults to 0.
     pub reserved: u32,
+}
+
+const DO01_LEN: u32 = std::mem::size_of::<DotOutput>() as u32;
+
+impl Default for DotInput {
+    fn default() -> Self {
+        Self {
+            magic: PVM_DI_MAGIC,
+            version: SMOKE_TEST_VERSION,
+            flags: 0,
+            provider: PVM_DOT_PROVIDER_HOST_READ_AT,
+            file_off_lo: 0,
+            file_off_hi: 0,
+            block_len: 0,
+            quant_kind: 0,
+            vec_off: DI01_LEN,
+            vec_len: 0,
+            reserved0: 0,
+            reserved1: 0,
+        }
+    }
+}
+
+impl DotInput {
+    /// Helper function to create a DotInput instance for a Q8_0 block at a given file offset.
+    pub fn q8_0(block_file_off: u64) -> Self {
+        Self {
+            quant_kind: PVM_DOT_Q8_0_BLOCK_LEN,
+            vec_len: PVM_DOT_QUANT_Q8_0,
+            file_off_lo: block_file_off as u32,
+            file_off_hi: (block_file_off >> 32) as u32,
+            ..Default::default()
+        }
+    }
+}
+
+impl Default for DotOutput {
+    fn default() -> Self {
+        Self {
+            magic: PVM_DO_MAGIC,
+            version: SMOKE_TEST_VERSION,
+            stage: 0,
+            quant_kind: PVM_DOT_QUANT_Q8_0,
+            result_bits: 0,
+            vec_len: PVM_DOT_Q8_0_VALUES as u32,
+            block_len: 0,
+            reserved: 0,
+        }
+    }
 }
