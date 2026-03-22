@@ -12,7 +12,26 @@ use std::{
 };
 
 #[derive(Debug, Default, Clone, Decode, Encode)]
-pub struct Q8_0(pub [f32; PVM_DOT_Q8_0_VALUES]);
+pub struct Q8Input(pub [f32; PVM_DOT_Q8_0_VALUES]);
+
+impl From<&[f32]> for Q8Input {
+    fn from(slice: &[f32]) -> Self {
+        let mut arr = [0.0f32; PVM_DOT_Q8_0_VALUES];
+        arr.copy_from_slice(&slice[..PVM_DOT_Q8_0_VALUES]);
+        Self(arr)
+    }
+}
+
+#[derive(Debug, Clone, Decode, Encode)]
+pub struct Q8Block(pub [u8; PVM_DOT_Q8_0_BLOCK_LEN as usize]);
+
+impl From<&[u8]> for Q8Block {
+    fn from(bytes: &[u8]) -> Self {
+        let mut block = [0u8; PVM_DOT_Q8_0_BLOCK_LEN as usize];
+        block.copy_from_slice(&bytes[..PVM_DOT_Q8_0_BLOCK_LEN as usize]);
+        Self(block)
+    }
+}
 
 /// Custom DI01 header.
 /// Used as the agreed full input buffer format between the guest and the host.
@@ -142,11 +161,7 @@ impl HostState {
         let len = buf.len() as u64;
 
         let end = offset.checked_add(len).ok_or_else(|| {
-            anyhow::anyhow!(
-                "offset overflow: offset {:#x}, length {:#x}",
-                offset,
-                len
-            )
+            anyhow::anyhow!("offset overflow: offset {:#x}, length {:#x}", offset, len)
         })?;
 
         if end > self.model_len {
