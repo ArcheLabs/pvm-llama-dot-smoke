@@ -4,7 +4,12 @@ use crate::consts::{
     PVM_DI_MAGIC, PVM_DOT_PROVIDER_HOST_READ_AT, PVM_DOT_Q8_0_BLOCK_LEN, PVM_DOT_Q8_0_VALUES,
     PVM_DOT_QUANT_Q8_0, PVM_DO_MAGIC, SMOKE_TEST_VERSION,
 };
+use anyhow::{bail, Result};
 use jam_codec::{Decode, Encode};
+use std::{
+    fs::File,
+    io::{Read, Seek, SeekFrom},
+};
 
 #[derive(Debug, Default, Clone, Decode, Encode)]
 pub struct Q8_0(pub [f32; PVM_DOT_Q8_0_VALUES]);
@@ -112,5 +117,62 @@ impl Default for DotOutput {
             block_len: 0,
             reserved: 0,
         }
+    }
+}
+
+/// Fixed sample: `output.weight` / `Q8_0` / `block 0`
+///
+/// The smoke test is bound to the fixed block offset in the real model file.
+/// If the model file is changed, this value must be updated accordingly.
+///
+/// Note: the tensor/type information of a GGUF model file can be inspected with:
+/// https://github.com/ggml-org/llama.cpp/blob/master/gguf-py/gguf/scripts/gguf_dump.py
+const FIXED_BLOCK_FILE_OFF: u64 = 5_947_744;
+
+#[derive(Debug)]
+pub struct HostState {
+    /// Open handle to the model file.
+    model_file: File,
+    /// Cached total length of the model file, used for bounds checks.
+    model_len: u64,
+}
+
+impl HostState {
+    fn read_exact_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        let len = buf.len() as u64;
+
+        let end = offset.checked_add(len).ok_or_else(|| {
+            anyhow::anyhow!(
+                "offset overflow: offset {:#x}, length {:#x}",
+                offset,
+                len
+            )
+        })?;
+
+        if end > self.model_len {
+            bail!(
+                "read out of bounds: offset {:#x}, length {:#x}, but model length is only {:#x}",
+                offset,
+                len,
+                self.model_len
+            );
+        }
+        self.model_file.seek(SeekFrom::Start(offset))?;
+        self.model_file.read_exact(buf)?;
+        Ok(())
+    }
+
+    fn read_page_zero_padded(&mut self, off: u64, buf: &mut [u8]) -> Result<()> {
+        buf.fill(0);
+
+        let avail_len = self.model_len.saturating_sub(off);
+        if avail_len == 0 {
+            return Ok(());
+        }
+
+        let read_len = avail_len.min(buf.len() as u64) as usize;
+        self.read_exact_at(off, &mut buf[..read_len])?;
+
+        Ok(())
     }
 }

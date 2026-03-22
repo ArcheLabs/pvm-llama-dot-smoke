@@ -24,11 +24,13 @@ pub const PVM_DO_MAGIC: u32 = u32::from_le_bytes(*b"DO01");
 /// Smoke test protocol version.
 pub const SMOKE_TEST_VERSION: u32 = 1;
 
-/// provider 类型：通过 host 回调 `provider_read_at` 按 offset 读取模型文件。
-/// The provider type: reading model files at given offsets through the host callback `provider_read_at`.
+/// Provider kind: read the model file at a given offset through the host callback
+/// `provider_read_at`.
 ///
 /// Notes:
-/// - 这是一个简单的 provider ABI
-/// - guest 自己并不直接持有 GGUF 文件，真正的读取动作由 host 完成，并将结果写回 guest 内存
-/// - 正式版本中也将延续该机制，未来会通过对模型文件生成承诺来验证数据是否被篡改
+/// - This is a minimal provider ABI.
+/// - The guest does not hold the GGUF file directly; the actual read is performed
+///   by the host, which writes the result back into guest memory.
+/// - The production design will keep this mechanism. In the future, commitments
+///   over the model file can be used to verify that the data has not been tampered with.
 pub const PVM_DOT_PROVIDER_HOST_READ_AT: u32 = 4;
