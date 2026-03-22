@@ -12,6 +12,13 @@ use std::{
     io::{Read, Seek, SeekFrom},
 };
 
+/// Fixed-length floating-point input vector for the Q8_0 dot-product smoke test.
+///
+/// This wraps the dense input vector `x` used by the host-side reference path
+/// and by the guest-side verifier input protocol.
+///
+/// The length is fixed by `PVM_DOT_Q8_0_VALUES`, which matches the logical
+/// number of values represented by one Q8_0 block.
 #[derive(Debug, Default, Clone, Decode, Encode)]
 pub struct Q8Input(pub [f32; PVM_DOT_Q8_0_VALUES]);
 
@@ -23,6 +30,15 @@ impl From<[f32; PVM_DOT_Q8_0_VALUES]> for Q8Input {
     }
 }
 
+/// Raw on-disk bytes of a single Q8_0 quantized block.
+///
+/// This type stores the exact block payload as read from the model file,
+/// without interpreting it at the type level. The block layout is expected
+/// to follow the Q8_0 encoding convention:
+/// - a leading fp16 scale;
+/// - followed by quantized 8-bit values.
+///
+/// The total byte size is fixed by `PVM_DOT_Q8_0_BLOCK_LEN`.
 #[derive(Debug, Clone, Decode, Encode)]
 pub struct Q8Block(pub [u8; PVM_DOT_Q8_0_BLOCK_LEN as usize]);
 
@@ -71,6 +87,7 @@ pub struct DotInput {
     pub reserved1: u32,
 }
 
+/// The total byte length of the DI01 header, used for buffer layout calculations.
 pub const DI01_LEN: u32 = std::mem::size_of::<DotInput>() as u32;
 
 /// DO01 header.
@@ -97,6 +114,7 @@ pub struct DotOutput {
     pub reserved: u32,
 }
 
+/// The total byte length of the DO01 header, used for buffer layout calculations.
 pub const DO01_LEN: u32 = std::mem::size_of::<DotOutput>() as u32;
 
 impl Default for DotInput {
@@ -147,11 +165,26 @@ impl Default for DotOutput {
     }
 }
 
+/// Resolved guest memory layout for the current PVM instance.
+///
+/// These fields are obtained from guest-exported helper functions and define
+/// where the host should write the encoded input and where it should read the
+/// fixed-size output buffer.
+///
+/// `*_ptr` fields are guest memory addresses, and `*_cap` fields are the
+/// corresponding capacities in bytes.
 #[derive(Debug, Clone, Decode, Encode)]
-pub struct InstancePosion {
+pub struct InstancePosition {
+    /// Guest pointer to the start of the input buffer.
     pub input_ptr: u32,
+
+    /// Total capacity of the guest input buffer, in bytes.
     pub input_cap: u32,
+
+    /// Guest pointer to the start of the output buffer.
     pub output_ptr: u32,
+
+    /// Total capacity of the guest output buffer, in bytes.
     pub output_cap: u32,
 }
 
@@ -173,6 +206,10 @@ pub struct HostState {
 }
 
 impl HostState {
+    /// Creates a new host state from the opened model file.
+    ///
+    /// This records the total file length up front so that later reads can
+    /// perform explicit bounds checks before touching the file.
     pub fn new(model_file: File) -> Result<Self> {
         let model_len = model_file.metadata()?.len();
         Ok(Self {
@@ -181,6 +218,15 @@ impl HostState {
         })
     }
 
+    /// Reads exactly `buf.len()` bytes starting at `offset`.
+    ///
+    /// This is a strict, bounds-checked read:
+    /// - it fails if `offset + len` overflows;
+    /// - it fails if the requested range exceeds the model file length;
+    /// - otherwise it seeks to `offset` and fills the entire buffer.
+    ///
+    /// This helper is used for protocol-critical reads where partial data
+    /// would indicate a logic error rather than an expected short read.
     pub fn read_exact_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
         let len = buf.len() as u64;
 
@@ -201,6 +247,15 @@ impl HostState {
         Ok(())
     }
 
+    /// Reads a page-like chunk from the model file and zero-pads the remainder.
+    ///
+    /// The destination buffer is first cleared to zero. Then:
+    /// - if `off` is already beyond EOF, the buffer remains all zeroes;
+    /// - otherwise, up to `buf.len()` available bytes are read from `off`;
+    /// - any unread tail stays zero-filled.
+    ///
+    /// This is useful when emulating page-based reads where the final page may
+    /// be only partially backed by file data.
     pub fn read_page_zero_padded(&mut self, off: u64, buf: &mut [u8]) -> Result<()> {
         buf.fill(0);
 
@@ -215,11 +270,25 @@ impl HostState {
         Ok(())
     }
 
+    /// Queries the guest-exported input/output buffer layout and validates it.
+    ///
+    /// This method calls the guest exports:
+    /// - `pvm_input_ptr`
+    /// - `pvm_input_cap`
+    /// - `pvm_output_ptr`
+    /// - `pvm_output_cap`
+    ///
+    /// It then verifies that:
+    /// - the prepared input fits into the guest input buffer;
+    /// - the fixed `DO01` output area fits into the guest output buffer.
+    ///
+    /// On success, it returns the resolved buffer pointers and capacities for
+    /// the current instance.
     pub fn init(
         &mut self,
         instance: &mut Instance<HostState, Error>,
         input_len: u32,
-    ) -> Result<InstancePosion> {
+    ) -> Result<InstancePosition> {
         let input_ptr: u32 = instance
             .call_typed_and_get_result(self, "pvm_input_ptr", ())
             .map_err(|e| anyhow!("call pvm_input_ptr failed: {:?}", e))?;
@@ -252,7 +321,7 @@ impl HostState {
             );
         }
 
-        Ok(InstancePosion {
+        Ok(InstancePosition {
             input_ptr,
             input_cap,
             output_ptr,
@@ -260,10 +329,21 @@ impl HostState {
         })
     }
 
+    /// Executes the guest entrypoint and returns the raw `DO01` output bytes.
+    ///
+    /// The guest `main` function is invoked with:
+    /// - the input pointer and actual input length;
+    /// - the output pointer and fixed `DO01` output length.
+    ///
+    /// The guest is expected to return `PVM_DOT_OK` on success. Any other status
+    /// is treated as a guest-side failure and returned as an error.
+    ///
+    /// If execution succeeds, this method reads back exactly `DO01_LEN` bytes
+    /// from guest memory and returns them to the host for decoding.
     pub fn run(
         &mut self,
         instance: &mut Instance<HostState, Error>,
-        pos: &InstancePosion,
+        pos: &InstancePosition,
         input_len: u32,
     ) -> Result<Vec<u8>> {
         let status: u64 = instance

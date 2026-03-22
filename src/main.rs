@@ -63,16 +63,20 @@ fn main() -> Result<()> {
 
     let module_path = args.next().ok_or_else(|| anyhow!("missing module path"))?;
 
+    // 1. Load the blob bytes and parse them
     let raw_blob = fs::read(&guest_blob_path)?;
     let blob = ProgramBlob::parse(raw_blob.into())?;
 
+    // 2. Initialize the PVM environment
     let config = Config::from_env()?;
     let engine = Engine::new(&config)?;
     let module = Module::from_blob(&engine, &ModuleConfig::new(), blob)?;
 
+    // 3. Open the model file and initialize HostState
     let model_file = fs::File::open(&module_path)?;
     let mut host = HostState::new(model_file)?;
 
+    // 4. Build the input data and compute the reference result
     let x: Q8Input = fixed_input_vec().into();
 
     let mut block = Q8Block::default();
@@ -80,6 +84,7 @@ fn main() -> Result<()> {
 
     let reference_result = dot_q8_0_reference(&block, &x);
 
+    // 5. Build the PVM instance and initialize the memory pointers
     let input = build_input(FIXED_BLOCK_FILE_OFF, &x);
     let input_len = input.len() as u32;
 
@@ -92,9 +97,11 @@ fn main() -> Result<()> {
     instance.write_memory(pos.input_ptr, &input)?;
     instance.write_memory(pos.output_ptr, &[0u8; DO01_LEN as usize])?;
 
+    // 6. Execute the PVM and retrieve the output
     let output_bytes = host.run(&mut instance, &pos, input_len)?;
     let output = DotOutput::decode(&mut output_bytes.as_slice())?;
 
+    // 7. Validate the output and print the result
     if output.magic != PVM_DO_MAGIC {
         bail!(
             "invalid output magic: expected {:#x}, got {:#x}",
