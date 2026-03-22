@@ -5,12 +5,6 @@ use crate::{
     primitives::{Q8Block, Q8Input},
 };
 
-/// A minimal little-endian reader without bounds checks.
-pub fn read_u32_le(buf: &[u8], off: usize) -> u32 {
-    let bytes: [u8; 4] = buf[off..off + 4].try_into().unwrap();
-    u32::from_le_bytes(bytes)
-}
-
 /// A simple method to compare two floating-point numbers for approximate equality
 pub fn approx_eq(a: f32, b: f32) -> bool {
     (a - b).abs() <= 1e-6
