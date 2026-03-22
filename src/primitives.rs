@@ -122,8 +122,9 @@ impl DotInput {
     /// Helper function to create a DotInput instance for a Q8_0 block at a given file offset.
     pub fn q8_0(block_file_off: u64) -> Self {
         Self {
-            quant_kind: PVM_DOT_Q8_0_BLOCK_LEN,
-            vec_len: PVM_DOT_QUANT_Q8_0,
+            block_len: PVM_DOT_Q8_0_BLOCK_LEN,
+            quant_kind: PVM_DOT_QUANT_Q8_0,
+            vec_len: PVM_DOT_Q8_0_VALUES as u32,
             file_off_lo: block_file_off as u32,
             file_off_hi: (block_file_off >> 32) as u32,
             ..Default::default()
