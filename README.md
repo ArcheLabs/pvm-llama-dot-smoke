@@ -80,9 +80,9 @@ However, the following areas are not yet covered:
 
 Clone this repository and download the model.
 
-```
+```bash
 # Clone this repository
-git clonegit@github.com:ArcheLabs/pvm-llama-dot-smoke.git
+git clone git@github.com:ArcheLabs/pvm-llama-dot-smoke.git
 cd pvm-llama-dot-smoke
 
 # Download the model
@@ -100,7 +100,7 @@ Run the test. Note:
 - the current input protocol, quantization parsing, and fixed block selection are still bound to this model
 - after changing the model or quantization format, the current version may not work directly
 
-```
+```bash
 # Run directly
 cargo run --release
 
@@ -110,7 +110,7 @@ cargo run --release -- --prompt "Hello JAM"
 
 If you see output similar to the following, the test has succeeded:
 
-```
+```bash
 fixed_block_off = 0x5ac160
 quant_kind      = 8
 vec_len         = 32
