@@ -5,9 +5,58 @@ use crate::{
     primitives::{Q8Block, Q8Input},
 };
 
+// Standard 64-bit golden-ratio increment used by SplitMix64 / SplittableRandom.
+//
+// Reference: https://gee.cs.oswego.edu/dl/papers/oopsla14.pdf
+const GOLDEN_GAMMA: u64 = 0x9e37_79b9_7f4a_7c15;
+
+// Standard 64-bit FNV-1a offset basis used by the FNV hash algorithm.
+//
+// Reference: https://www.ietf.org/archive/id/draft-eastlake-fnv-21.html
+const FNV64_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+const FNV64_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+// https://gee.cs.oswego.edu/dl/papers/oopsla14.pdf
+const MIX64_VARIANT13_MUL1: u64 = 0xbf58_476d_1ce4_e5b9;
+const MIX64_VARIANT13_MUL2: u64 = 0x94d0_49bb_1331_11eb;
+
 /// A simple method to compare two floating-point numbers for approximate equality
 pub fn approx_eq(a: f32, b: f32) -> bool {
     (a - b).abs() <= 1e-6
+}
+
+pub fn prompt_to_vec(prompt: &str) -> Q8Input {
+    let mut seed = fnv1a64(prompt.as_bytes());
+
+    if prompt.is_empty() {
+        seed ^= GOLDEN_GAMMA;
+    }
+
+    let mut vec = [0.0f32; PVM_DOT_Q8_0_VALUES];
+
+    for (i, v) in vec.iter_mut().enumerate() {
+        let seed = splitmix64(seed.wrapping_add(i as u64));
+        let u = ((seed >> 40) as u32) as f32 / ((1u32 << 24) as f32);
+        *v = u * 2.0 - 1.0;
+    }
+
+    vec.into()
+}
+
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash = FNV64_BASIS;
+    for &byte in bytes {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(FNV64_PRIME);
+    }
+    hash
+}
+
+fn splitmix64(seed: u64) -> u64 {
+    let mut z = seed.wrapping_add(GOLDEN_GAMMA);
+    z = (z ^ (z >> 30)).wrapping_mul(MIX64_VARIANT13_MUL1);
+    z = (z ^ (z >> 27)).wrapping_mul(MIX64_VARIANT13_MUL2);
+    z ^ (z >> 31)
 }
 
 /// Build the fixed input vector `x`.
