@@ -25,6 +25,7 @@ pub fn approx_eq(a: f32, b: f32) -> bool {
     (a - b).abs() <= 1e-6
 }
 
+/// Map an input prompt into a deterministic fixed-length vector.
 pub fn prompt_to_vec(prompt: &str) -> Q8Input {
     let mut seed = fnv1a64(prompt.as_bytes());
 
@@ -57,24 +58,6 @@ fn splitmix64(seed: u64) -> u64 {
     z = (z ^ (z >> 30)).wrapping_mul(MIX64_VARIANT13_MUL1);
     z = (z ^ (z >> 27)).wrapping_mul(MIX64_VARIANT13_MUL2);
     z ^ (z >> 31)
-}
-
-/// Build the fixed input vector `x`.
-///
-/// For smoke-test purposes, this is a simple deterministic test input rather
-/// than one loaded from a model file or derived from a real prompt. This helps
-/// keep the verification focused on operator-level consistency, avoiding
-/// additional sources of variability such as tokenization, embedding lookup,
-/// and graph execution, while ensuring the result is fully reproducible across
-/// runs.
-pub fn fixed_input_vec() -> [f32; PVM_DOT_Q8_0_VALUES] {
-    let mut v = [0.0f32; PVM_DOT_Q8_0_VALUES];
-
-    for i in 0..PVM_DOT_Q8_0_VALUES {
-        let k = ((i * 37 + 11) % 29) as i32 - 14;
-        v[i] = (k as f32) / 8.0;
-    }
-    v
 }
 
 /// Manually convert a 16-bit float (`fp16` / `half`) to `f32` to avoid an
