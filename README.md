@@ -102,10 +102,10 @@ Run the test. Note:
 
 ```
 # Run directly
-cargo run--release
+cargo run --release
 
 # Custom prompt input
-cargo run--release----prompt"Hello JAM"
+cargo run --release -- --prompt "Hello JAM"
 ```
 
 If you see output similar to the following, the test has succeeded:
